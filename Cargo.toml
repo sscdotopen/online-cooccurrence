@@ -1,0 +1,17 @@
+[package]
+name = "cooccurrence"
+version = "0.1.0"
+authors = ["Frank McSherry <fmcsherry@me.com>"]
+
+[dependencies.timely]
+git="http://github.com/frankmcsherry/timely-dataflow/"
+#path="../timely-dataflow"
+
+[dependencies.abomonation]
+path="../abomonation"
+
+[dependencies.differential-dataflow]
+path="../differential-dataflow"
+
+[dependencies]
+rand="0.3.13"
