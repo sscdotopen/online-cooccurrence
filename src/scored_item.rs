@@ -1,27 +1,23 @@
 use std::cmp::Ordering;
 
-#[derive(Debug, Clone)]
+#[derive(Eq,PartialEq,Debug)]
 pub struct ScoredItem {
   pub item: usize,
-  pub score: f64,
+  pub score: isize,
 }
 
-impl Eq for ScoredItem {}
-
-impl PartialEq for ScoredItem {
-  fn eq(&self, other: &ScoredItem) -> bool {
-    self.item == other.item
+fn cmp_reverse(scored_item_a: &ScoredItem, scored_item_b: &ScoredItem) -> Ordering {
+  match scored_item_a.score.cmp(&scored_item_b.score) {
+    Ordering::Less => Ordering::Greater,
+    Ordering::Greater => Ordering::Less,
+    Ordering::Equal => Ordering::Equal
   }
 }
 
 impl Ord for ScoredItem {
-  fn cmp(&self, other: &Self) -> Ordering {
-    self.item.cmp(&other.item)
-  }
+  fn cmp(&self, other: &Self) -> Ordering { cmp_reverse(self, other) }
 }
 
 impl PartialOrd for ScoredItem {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(&other))
-  }
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(cmp_reverse(self, other)) }
 }

@@ -1,10 +1,6 @@
-#[macro_use]
-extern crate abomonation;
 extern crate rand;
 extern crate timely;
 extern crate differential_dataflow;
-
-use abomonation::Abomonation;
 
 use rand::{Rng, SeedableRng, StdRng};
 
@@ -14,8 +10,6 @@ use differential_dataflow::AsCollection;
 use differential_dataflow::operators::*;
 use differential_dataflow::input::InputSession;
 
-
-
 mod loglikelihoodratio;
 mod scored_item;
 
@@ -23,9 +17,7 @@ use scored_item::ScoredItem;
 
 fn main() {
 
-  unsafe_abomonate!(ScoredItem : item, score);
-
-  // define a new timely dataflow computation. 
+  // define a new timely dataflow computation.
   timely::execute_from_args(std::env::args(), move |worker| {
 
     // capture parameters of the experiment.
@@ -33,6 +25,7 @@ fn main() {
     let items: usize = std::env::args().nth(2).unwrap().parse().unwrap();
     let scale: usize = std::env::args().nth(3).unwrap().parse().unwrap();
     let batch: usize = std::env::args().nth(4).unwrap().parse().unwrap();
+    let k: usize = std::env::args().nth(5).unwrap().parse().unwrap();
 
     let index = worker.index();
     let peers = worker.peers();
@@ -44,7 +37,7 @@ fn main() {
       let occurrences = occurrences.as_collection();
 
       //TODO clarify assumption that we get no duplicates
-      //TODO adjust code to only work with upper triangular half of cooccurrence matrix
+      //TODO adjust code to only work with upper triangular half of cooccurrence matrix!
 
       /* Compute the cooccurrence matrix C = A'A from the binary interaction matrix A. */
       let cooccurrences = occurrences
@@ -57,11 +50,11 @@ fn main() {
         .map(|((item_a, _), num_cooccurrences)| (item_a, num_cooccurrences))
         .group(|_item, items_with_counts, output| {
 
-            let row_sum = items_with_counts.iter()
-                .fold (0, |sum, &item_with_count| sum + item_with_count.1);
+          let row_sum = items_with_counts.iter()
+            .fold (0, |sum, &item_with_count| sum + item_with_count.1);
 
-            output.push((row_sum, 1));
-          });
+          output.push((row_sum, 1));
+        });
 
       /* Join the cooccurrence pairs with the corresponding row sums. */
       let cooccurrences_with_row_sums = cooccurrences
@@ -76,63 +69,43 @@ fn main() {
           (item_a, (item_b, num_cooccurrences, row_sum_a, row_sum_b))
         });
 
-      cooccurrences_with_row_sums
-          .inspect(|record| println!("[cooccurrences_with_row_sums] {:?}", record));
+//      cooccurrences_with_row_sums
+//        .inspect(|record| println!("[cooccurrences_with_row_sums] {:?}", record));
 
-      /* Compute LLR scores for each item pair. */
-      let llr_scores = cooccurrences_with_row_sums.map(
-        |(item_a, (item_b, num_cooccurrences, row_sum_a, row_sum_b))| {
+      /* Compute LLR scores and emit highest scoring items per item. */
+      let topk_cooccurring_items = cooccurrences_with_row_sums
+        .group(move |_, items_with_infos, output| {
 
-          let k11: isize = num_cooccurrences;
-          let k12: isize = row_sum_a as isize - k11;
-          let k21: isize = row_sum_b as isize - k11;
-          let k22: isize = 10000 - k12 - k21 + k11;
+          //TODO we could compute the row_sum_a here and save a join
 
-          let llr_score = loglikelihoodratio::log_likelihood_ratio(k11, k12, k21, k22);
+          let mut scored_items = items_with_infos.iter()
+            .map(|&((item_b, num_cooccurrences, row_sum_a, row_sum_b), _)| {
 
-          ((item_a, item_b), llr_score)
+            let k11: isize = num_cooccurrences;
+            let k12: isize = row_sum_a as isize - k11;
+            let k21: isize = row_sum_b as isize - k11;
+            let k22: isize = 10000 - k12 - k21 + k11;
+
+            let llr_score = loglikelihoodratio::log_likelihood_ratio(k11, k12, k21, k22);
+
+            let llr_score = (llr_score * 1000.0) as isize;
+
+            ScoredItem { item: item_b, score: llr_score }
+          })
+          .collect::<Vec<_>>();
+
+          scored_items.sort();
+
+          for scored_item in scored_items.into_iter().take(k) {
+            output.push((scored_item.item, 1))
+          }
         });
 
-      //let k = ...;
-
-      let topk_cooccurring_items = llr_scores
-          .map(|((item_a, item_b), llr_score)| {
-            (item_a, ScoredItem { item : item_b, score: llr_score } )
-          })
-          .group(|_, items_with_scores, output| {
-
-            let top_item = items_with_scores
-                //.sort_by_key(|k| k.1.1)
-                .last();
-
-            output.push((top_item, 1));
-          });
 
       let probe = topk_cooccurring_items
           .inspect(|x| println!("change: {:?}", x))
           .probe();
-/*
-      // produce the (item, item) collection
-      let cooccurrences = occurrences
-        .join_map(&occurrences, |_user, &item_a, &item_b| (item_a, item_b));
 
-      // count the occurrences of each item.
-      let counts = cooccurrences
-        .map(|(item_a,_)| item_a)
-        .count();
-
-      // produce ((item1, item2), count1, count2, count12) tuples
-      let cooccurrences_with_counts = cooccurrences
-        .join_map(&counts, |&item_a, &item_b, &count_item_a| (item_b, (item_a, count_item_a)))
-        .join_map(&counts, |&item_b, &(item_a, count_item_a), &count_item_b| {
-          ((item_a, item_b), count_item_a, count_item_b)
-        });
-
-
-      let probe = cooccurrences_with_counts
-        .inspect(|x| println!("change: {:?}", x))
-        .probe();
-*/
       (input, probe)
     });
 
